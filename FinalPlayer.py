@@ -5,29 +5,34 @@ import time
 import numpy as np
 from pynput import keyboard
 
-ser = serial.Serial('COM4', 115200) # init serial communication
+ser = serial.Serial('COM4', 19200) # init serial communication
 
 # loading files
 print('\n\nVideo(mp4) and File(txt) name should be the same!!\n')
 name = input('Enter File name: ')
 data = np.loadtxt(name+'_modified.txt',unpack='true')
 
-# counting the data
-count = -1
-for item in data[0]:
-    count+=1
-    
+#### PARAMETER CHANGE HERE
+# syncing parameter drift
+drift = 2.30/1650  # second / timestamp (t) (the output log is in t/10) # negative value for motion lagging
+                   # (eva = 2.30/1650) 
+delay_start = 0.2  # delay between seek to begining and serial com
 # movement parameters
 # This section makes the angle from the original data ( theta from 0-100 range)
 angle = 30   # movement range
 lowestangle = 70  # lowest angle in range
 values = []
 t = 0
+# counting the data
+count = -1
+for item in data[0]:
+    count+=1
 while t <= count:
     temp = (int(data[1][t])/100)*angle
     values.append(int(temp)+lowestangle)
     data[0][t]=data[0][t]/10
     t += 1
+
 
 # Video player initialize
 Instance = vlc.Instance('--fullscreen')
@@ -47,34 +52,36 @@ media_length = int(player.get_length()/10)/10  # ms to 0.01s because our datawid
 skip_position = 10 * 20  # multiplier * seconds (skips by 20 sec)
 skip_percent = (skip_position/media_length)  # convert skip to percent (0-1 range)
 
-# send data to arduino
-t = 0
-drift = 2.30/1650 # (2.30/1650 eva) # second / timestamp # negative value for motion lagging
+# timestamps needed for globar varable between threads
 t0 = time.perf_counter()*10
-pause_flag = 0  # pause flag for the serial com thread, controlled by the keyboard thread
+t = 0 # also resets t=count from counting the data
 
 ### serial communication stuff
 #skip media player
-terminate_serial = 0
+pause_flag = 0  # pause flag for the serial com thread, controlled by the keyboard thread
+terminate_serial = 0 # serial com thread termination
 def serial_com():
     global t
     global t0
+    global delay_start
     player.set_position(0) # reset player position
-    time.sleep(0.8)  #start delay compensation
+    time.sleep(delay_start)  #start delay compensation
     t0 = time.perf_counter()*10
     while t<count: #ignoring the last value for simplicity 
         while pause_flag==1:
             pass
-        if (((time.perf_counter()*10 - t0)-(t/10+int(drift*t)))>0.01):
+        if (((time.perf_counter()*10 - t0)-(t/10))>0.01):
             print(t/10)
             t+=1
-        ser.write(values[t].to_bytes(1,'little'))
+        ser.write(values[t+int(drift*t*10)].to_bytes(1,'little'))
         time.sleep(0.01)
         t+=1
         if terminate_serial:
             break
 threading.Thread(target=serial_com).start()
 ttt = threading.Thread(target=serial_com)
+
+
 # keyboard control setup
 def on_press(key):
     global t
@@ -121,6 +128,4 @@ listener = keyboard.Listener(on_press=on_press)
 listener.start()  # start to listen on a separate thread
 listener.join()  # remove if main thread is polling self.keys
 
-ser.close()
-
-
+ser.close() # close serial port
