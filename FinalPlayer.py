@@ -38,6 +38,7 @@ player.set_media(Media)
 
 # start player
 player.play()
+player.set_position(0.9)
 
 time.sleep(1) # this is needed for the get_length() to work properly
 media_length = int(player.get_length()/10)/10  # ms to 0.01s because our datawidth is 0.01s
@@ -50,24 +51,28 @@ skip_percent = (skip_position/media_length)  # convert skip to percent (0-1 rang
 t = 0
 drift = 2.30/1650 # (2.30/1650 eva) # second / timestamp # negative value for motion lagging
 t0 = time.perf_counter()*10
-pause_flag = 0
+pause_flag = 0  # pause flag for the serial com thread, controlled by the keyboard thread
 
 ### serial communication stuff
 #skip media player
+terminate_serial = 0
 def serial_com():
     global t
+    global t0
     player.set_position(0) # reset player position
     time.sleep(0.8)  #start delay compensation
     t0 = time.perf_counter()*10
     while t<count: #ignoring the last value for simplicity 
         while pause_flag==1:
             pass
-        if (((time.perf_counter()*10 - t0)-(data[0][t]+int(drift*t)))>0.01):
-            print(data[0][t])
+        if (((time.perf_counter()*10 - t0)-(t/10+int(drift*t)))>0.01):
+            print(t/10)
             t+=1
         ser.write(values[t].to_bytes(1,'little'))
         time.sleep(0.01)
         t+=1
+        if terminate_serial:
+            break
 threading.Thread(target=serial_com).start()
 ttt = threading.Thread(target=serial_com)
 # keyboard control setup
@@ -76,10 +81,12 @@ def on_press(key):
     global t0
     global pause_flag
     global ttt
+    global terminate_serial
     if key == keyboard.Key.esc:
+        terminate_serial = 1
         player.stop()  # stop media
-        ttt._stop()
-        return False  # stop listen
+        time.sleep(1)
+        return False  # stop listen keys
     try:
         k = key.char  # single-char keys
     except:
@@ -97,7 +104,7 @@ def on_press(key):
             #skip media player
             player.set_position(skip)
             t = t - skip_position * 10
-            t0 = t0 + skip_position * 10
+            t0 = t0 + skip_position
         
         if k=='right':
             now_position = player.get_position() # get current playhead position (0 - 1)
@@ -105,7 +112,7 @@ def on_press(key):
             #skip media player
             player.set_position(skip)
             t = t + skip_position * 10
-            t0 = t0 - skip_position * 10
+            t0 = t0 - skip_position
             
         # self.keys.append(k)  # store it in global-like variable
         #return False  # stop listener; remove this if want more keys
@@ -115,3 +122,5 @@ listener.start()  # start to listen on a separate thread
 listener.join()  # remove if main thread is polling self.keys
 
 ser.close()
+
+
